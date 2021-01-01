@@ -23,29 +23,6 @@ class RobotStatus:
 class RobotUser:
     # DIO
     def __init__(self, robot_def):
-        self.robot_def = robot_def
-        self.uid = robot_def.uid
-
-        self.choosing_bid_list = [] # 由recommend_sys填充
-        self.choosing_delay = 0
-        self.reading_bid = None
-        self.chosen_bid_set = set() # 用于这一刷推荐中会点击的书
-        
-        self.reading_chapter = 0
-        self.chapter_finish_delay = 0
-
-        # 以下四个字段控制用户是否打开app或继续使用app
-        self.addict_value = Args.addict_value_init_value
-        self.addict_value_restore_rate = Args.addict_value_restore_rate_init_value
-        self.detest_value = Args.detest_value_init_value
-        self.detest_value_restore_rate = Args.detest_value_restore_rate_init_value
-
-        self.status = RobotStatus.OFFLINE
-        
-
-        self.history_impr_map = dict() # 对已经推过的文章且没阅读过的，各种驱动值都会适当降低
-        self.history_read_map = dict() # 已经阅读过的
-
 
         self._uid = robot_def.uid
         self._robot_def = robot_def

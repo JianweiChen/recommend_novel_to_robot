@@ -6,7 +6,6 @@ import logging
 import numpy as np
 from novel_helper import NovelHelper, S
 from args import Args
-
 from event_manager import EventManager
 from robot import RobotUser, RobotStatus
 
@@ -310,7 +309,7 @@ class ActionMachine(object):
         robot_user._reading_bid = None
         robot_user._status = RobotStatus.CHOOSING
         for bid in robot_user._choosing_bid_list:
-            self.event_manager.emit_one_event(uid=robot_user.uid, bid=bid, event='impression')
+            self.event_manager.emit_one_event(uid=robot_user._uid, bid=bid, event='impression')
     
     # 第三状态——choosing
     def _run_robot_choosing(self, robot_user):
@@ -341,7 +340,7 @@ class ActionMachine(object):
                     last_period=self._period,
                     chapter=0,
                     addict_value=0)
-                self.event_manager.emit_one_event(uid=robot_user.uid, bid=bid, event='go_detail')
+                self.event_manager.emit_one_event(uid=robot_user._uid, bid=bid, event='go_detail')
                 break
             if random.random() < 0.1: # 10%的概率会被机器人记住“给我推过了”
                 robot_user._history_impr_map[bid] = ImpressionInfo(last_period=self._period)
