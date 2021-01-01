@@ -1,0 +1,32 @@
+syntax="proto3";
+
+message User {
+    string uid = 1;
+    repeated string word = 2;
+}
+
+message EnlightenInfo {
+    string word = 1;
+    int32 book_count = 2;
+    float weight = 3;
+}
+
+
+// 机器人会自己演化，但是简单的idl设计并不耽误它演化
+message Robot {
+    string uid = 1;
+    repeated EnlightenInfo ei = 2; // for 点击率，chapter、时长
+    repeated EnlightenInfo detest_ei = 3; // for 留存，想仿真标题党的效果
+    repeated EnlightenInfo addict_ei = 4; // for 留存
+}
+
+// 机器人的一个团，一个团1000人
+message RobotRegiment {
+    string regiment_id = 1;
+    repeated Robot robot = 2;
+}
+// 机器人的军队包括多少个团
+message RobotArmy {
+    string army_id = 1;
+    repeated RobotRegiment regiment = 2;
+}

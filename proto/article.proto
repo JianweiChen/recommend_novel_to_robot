@@ -1,0 +1,27 @@
+syntax="proto3";
+
+message Article {
+    string title = 1;
+    repeated string paragraph = 2;
+    repeated string keyword = 3;
+    repeated string category =4;
+    string id = 5;
+    bool complete = 6;
+    string rating = 7;
+    string create_date = 8;
+    string author_name = 9;
+    string synopsis = 10;
+}
+
+message Picture {
+    string picname = 1;
+    string dirname = 2;
+    string url = 3;
+    string author = 4;
+    string create_date = 5;
+    string content = 6;
+}
+
+message PictureWrap {
+    repeated Picture picture = 1;
+}

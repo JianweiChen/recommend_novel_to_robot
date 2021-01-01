@@ -1,0 +1,25 @@
+syntax="proto3";
+
+message Sentence {
+    repeated string word = 1;
+}
+
+message Paragraph {
+    repeated Sentence sentence = 1;
+}
+
+message Book {
+    string bid = 1;
+    Sentence title = 2;
+    Sentence synopsis = 3;
+    repeated Paragraph paragraph = 4;
+    repeated string keyword = 5; // i will add some by my own
+    repeated string category = 6;
+    string rating = 7;
+    string author = 8;
+}
+
+message BookWarehouse {
+    string name = 1;
+    repeated Book book = 2;
+}
