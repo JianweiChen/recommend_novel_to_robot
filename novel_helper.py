@@ -306,7 +306,7 @@ class NovelHelper(object):
         df.to_csv(Args.word_book_count_path)
     
     def get_cn(self, word):
-        word = word.capitalize()
+        word = word.lower()
         if word not in self.wv_cn_map:
             return 'x'
         return self.wv_cn_map[word]

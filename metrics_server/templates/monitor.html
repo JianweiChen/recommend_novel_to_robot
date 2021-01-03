@@ -1,0 +1,18 @@
+<html>
+<head>
+<title>MonitorRecommendNovelToRobot</title>
+<link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
+</head>
+<body>
+    <h2>Monitor-<span id="metrics_group_name">{{metrics_group_name}}</span>
+        <button id="switch_auto_refresh" value="on">Auto Refresh is ON</button>
+    </h2>
+    <ul>
+        <li>counter query: <span id="use_query">{{use_counter_query}}</span></li>
+    </ul>
+    <div id="container"></div>
+    <script src="https://apps.bdimg.com/libs/jquery/2.1.4/jquery.min.js"></script>
+    <script src="http://cdn.highcharts.com.cn/highcharts/highcharts.js"></script>
+    <script type="text/javascript" src='/static/monitor.js'></script>
+</body>
+</html>

@@ -629,3 +629,269 @@ def test_robot_finish_chapter(am, k=1):
                 idx,
                 score
             ))
+# coding=utf8
+import os
+import collections
+import requests
+import random
+
+class MetricsClient(object):
+    def __init__(self, action_machine):
+        self.action_machine = action_machine
+        self.base_url = "http://localhost:8001"
+        self._counter_map = dict()
+
+    def emit_store(self, query, value):
+        period = self.action_machine._period
+        # url = self.base_url + '/emit_store?query=%s&period=%s&value=%s' % (
+        #     query, period, value
+        # )
+        # requests.post(url)
+
+    def emit_counter(self, query, value):
+        period = self.action_machine._period
+        self._counter_map[query] = value
+        # url = self.base_url + '/emit_counter?query=%s&period=%s&value=%s' % (
+        #     query, period, value
+        # )
+        # requests.post(url)
+    def emit_timer(self, query, value):
+        period = self.action_machine._period
+        url = self.base_url + '/emit_timer?query=%s&period=%s&value=%s' % (
+            query, period, value
+        )
+        requests.post(url)
+
+    def get_period_json(self, period):
+        # 
+        json_data = dict()
+        for query, timer_info in enumerate(self._timer_map):
+            pass
+            
+
+    def real_emit(self, period):
+        pass
+
+
+    def clear_all(self):
+        url = self.base_url + '/clear'
+        requests.post(url)
+
+class FakeActionMachine(object):
+    def __init__(self):
+        self._period = 1
+    def next(self):
+        self._period += 1
+
+if __name__ == '__main__':
+    action_machine = FakeActionMachine()
+    mc = MetricsClient(action_machine)
+    for _ in range(100):
+        mc.emit_store('test', int(120*random.random()))
+        action_machine.next()# coding=utf8
+from flask import Flask
+from flask import render_template
+from flask import send_from_directory
+from flask import request
+app = Flask(__name__)
+import os
+import sys
+import collections
+import json
+
+class CounterInfo(object):
+    def __init__(self):
+        self.min_period = 0
+        self.max_period = 0
+        self.period_value_map = collections.defaultdict(int)
+    def add(self, period, value):
+        self.min_period = min(max(1, self.min_period), period)
+        self.max_period = max(self.max_period, period)
+        self.period_value_map[period] += value
+    def __repr__(self):
+        repr_message = 'min={}, max={}, dot_count={} ,value_avg={}'.format(
+            self.min_period, self.max_period,
+            len(self.period_value_map),
+            sum(self.period_value_map.values()) / len(self.period_value_map)
+        )
+        return repr_message
+
+class StoreInfo(object):
+    def __init__(self):
+        self.min_period = 0
+        self.max_period = 0
+        self.period_value_map = collections.defaultdict(int)
+    def add(self, period, value):
+        self.min_period = min(max(1, self.min_period), period)
+        self.max_period = max(self.max_period, period)
+        self.period_value_map[period] = value
+    def __repr__(self):
+        repr_message = 'min={}, max={}, dot_count={}'.format(
+            self.min_period, self.max_period,
+            len(self.period_value_map)
+        )
+        return repr_message
+
+class TimerInfo(object):
+    def __init__(self):
+        self.min_period = 0
+        self.max_period = 0
+        self.period_value_set_map = collections.defaultdict(set)
+    def add(self, period, value):
+        self.min_period = min(max(1, self.min_period), period)
+        self.max_period = max(self.max_period, period)
+        self.period_value_map[period].add(value)
+    def __repr__(self):
+        repr_message = 'min={}, max={}, dot_count={}'.format(
+            self.min_period, self.max_period,
+            len(self.period_value_map)
+        )
+        return repr_message
+
+class MetricServer(object):
+    
+    def __init__(self, name):
+        self.name = name
+        self._counter_map = collections.defaultdict(CounterInfo)
+        self._timer_map = collections.defaultdict(TimerInfo)
+        self._store_map = collections.defaultdict(StoreInfo)
+    
+    def emit_counter(self, period, query, value):
+        self._count_map[query].add(period, value)
+    
+    def emit_timer(self, period, query, value):
+        self._timer_map[query].add(period, value)
+
+    def emit_store(self, period, query, value):
+        self._store_map[query].add(period, value)
+    
+    def clear(self):
+        self._counter_map.clear()
+        self._timer_map.clear()
+        self._store_map.clear()
+
+metrics_server = MetricServer("default")
+
+
+
+@app.route('/', methods=['GET', ])
+def monitor():
+    use_counter_query = request.args.get("use_counter_query", "")
+    use_timer_query = request.args.get("use_timer_query", "")
+    use_store_query = request.args.get("use_store_query", "")
+    s = render_template('monitor.html', 
+        use_counter_query=use_counter_query,
+        use_timer_query=use_timer_query,
+        use_store_query=use_store_query
+    )
+    return s
+
+@app.route('/clear', methods=['GET', 'POST'])
+def clean():
+    metrics_server.clear()
+    return 'ok'
+
+@app.route('/emit_store', methods=['GET', 'POST'])
+def emit_store():
+    period = request.args.get("period", "")
+    query = request.args.get("query", "")
+    value = request.args.get("value", "")
+    try:
+        period = int(period)
+        query = str(query)
+        value = int(value)
+        assert period and query and value
+        metrics_server.emit_store(period, query, value)
+    except:
+        return "fail"
+    return "ok"
+@app.route('/emit_counter', methods=['GET', 'POST'])
+def emit_counter():
+    period = request.args.get("period", "")
+    query = request.args.get("query", "")
+    value = request.args.get("value", "")
+    try:
+        period = int(period)
+        query = str(query)
+        value = int(value)
+        assert period and query and value
+        metrics_server.emit_counter(period, query, value)
+    except:
+        return "fail"
+    return "ok"
+@app.route('/emit_timer', methods=['GET', 'POST'])
+def emit_timer():
+    period = request.args.get("period", "")
+    query = request.args.get("query", "")
+    value = request.args.get("value", "")
+    try:
+        period = int(period)
+        query = str(query)
+        value = int(value)
+        assert period and query and value
+        metrics_server.emit_timer(period, query, value)
+    except:
+        return "fail"
+    return "ok"
+
+
+def fill_store_to_rsp_data(use_store_query, rsp_data):
+    for query in use_store_query.split(','):
+        if query in metrics_server._store_map:
+            x_data, y_data = [], []
+            store_info = metrics_server._store_map[query]
+            for period in range(store_info.min_period, store_info.max_period+1):
+                x_data.append(period)
+                y_data.append(store_info.period_value_map.get(period, 0))
+            rsp_data[query] = {
+                'x_data': x_data,
+                'y_data': y_data,
+                'type': 'store'
+            }
+
+def fill_counter_to_rsp_data(use_counter_query, rsp_data):
+    for query_with_suffix in use_counter_query.split(','):
+        tp = query_with_suffix.split(':')
+        query = tp[0]
+        rate = False
+        if len(tp)>1 and tp[1] == 'rate':
+            rate = True
+        acc = 0
+        if query in metrics_server._counter_map:
+            x_data, y_data = [], []
+            counter_info = metrics_server._counter_map[query]
+            for period in range(counter_info.min_period, counter_info.max_period+1):
+                value = counter_info.period_value_map.get(period, 0)
+                if not rate:
+                    acc += value
+                    value = acc
+                x_data.append(period)
+                y_data.append(value)
+            rsp_data[query] = {
+                'x_data': x_data,
+                'y_data': y_data,
+                'type': 'counter'
+            }
+
+
+def fill_timer_to_rsp_data(use_timer_query, rsp_data):
+    pass
+
+
+@app.route('/query', methods=['GET', 'POST'])
+def query():
+    use_counter_query = request.args.get("use_counter_query", "")
+    use_timer_query = request.args.get("use_timer_query", "")
+    use_store_query = request.args.get("use_store_query", "")
+    rsp_data = dict()
+    try:
+        fill_store_to_rsp_data(use_store_query, rsp_data)
+        fill_counter_to_rsp_data(use_counter_query, rsp_data)
+        fill_timer_to_rsp_data(use_timer_query, rsp_data)
+    except Exception as e:
+        print(e)
+        return "fail"
+    else:
+        return json.dumps(rsp_data)
+
+app.run('localhost', 8001, debug=True) 

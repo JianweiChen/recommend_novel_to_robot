@@ -1,6 +1,7 @@
 import os
 import sys
 import random
+import time
 import collections
 import logging
 import numpy as np
@@ -8,6 +9,8 @@ from novel_helper import NovelHelper, S
 from args import Args
 from event_manager import EventManager
 from robot import RobotUser, RobotStatus
+from rec_sys.random_rec_sys import RecSysRandom
+from metrics_server.metrics_client import MetricsClient
 
 class Book:
     def __init__(self, book_def):
@@ -32,28 +35,6 @@ class ImpressionInfo(object):
     def __repr__(self):
         return "last_period=%s" % last_period
 
-# 在其他文件里继承该类
-class RecommendSysBase(object):
-    def __init__(self, action_machine):
-        self.action_machine = action_machine
-    
-    # 直接修改robot_user.choosing_bid_list
-    def recommend(self, robot_user, k=8):
-        raise NotImplementedError
-
-# 内置的推荐系统会随机返回Book
-class RecommendSysBuiltin(RecommendSysBase):
-    def __init__(self, action_machine):
-        super().__init__(action_machine)
-
-    # 随机推荐k个
-    def recommend(self, robot_user, k=8):
-        bid_list = list(self.action_machine.book_map.keys())
-        k = min(k, len(bid_list))
-        bid_recommend_list = random.sample(bid_list, k)
-        robot_user._choosing_bid_list.clear()
-        for bid in bid_recommend_list:
-            robot_user._choosing_bid_list.append(bid)
 
 # am用于调度机器人行为
 class ActionMachine(object):
@@ -78,13 +59,33 @@ class ActionMachine(object):
 
         self._period = 0
 
-        self.recommend_sys = RecommendSysBuiltin(self)
+        self.rec_sys = RecSysRandom(self)
 
         self.event_manager = EventManager(self)
         self.event_manager.clean_all_csv()
 
+        self.metrics_client = MetricsClient(self)
+
     def get_period(self):
         return self._period
+
+    def reset_timer(self):
+        self.st = time.time()
+    
+    def timer_cost(self):
+        return time.time() - self.st
+    
+    def emit_timer(self, query):
+        time_cost = self.timer_cost()
+        self.metrics_client.emit_timer(query, time_cost)
+
+    # 统计查询，会先检查sqlite-in-memory的建表状态
+    def query(self, sql_text, reprepare=True):
+        r = self.event_manager.query(sql_text, reprepare)
+        return r
+
+    def connect_rec_sys(self, rec_sys):
+        self.rec_sys = rec_sys
 
     def init_user_map(self):
         for regiment in self.robot_army.regiment:
@@ -106,11 +107,6 @@ class ActionMachine(object):
         if not word_list:
             word_list = ['empty', 'word', 'list']
         return word_list
-    
-    # 统计查询，会先检查sqlite-in-memory的建表状态
-    def query(self, sql_text, reprepare=True):
-        r = self.event_manager.query(sql_text, reprepare)
-        return r
 
     # 驱动分值：点击
     # click_drive_score, chapter_read_drive_score, open_app_drive_score, detest_drive_score
@@ -218,7 +214,7 @@ class ActionMachine(object):
         paragraph_all_count = len(book_def.paragraph)
         assert paragraph_all_count >= chapter and chapter > 0, \
             "chapter must in range %s>=chapter>=1 but get %s" % (paragraph_all_count, chapter)
-        to_read_paragraph = book.paragraph[chapter-1]
+        to_read_paragraph = book_def.paragraph[chapter-1]
         paragraph_word_list = S.paragraph_to_string_list(to_read_paragraph)
         detest_drive_score = self._dot_robot_book(
             robot_detest_word_list, paragraph_word_list, sample_loop=sample_loop)
@@ -245,21 +241,12 @@ class ActionMachine(object):
     def _get_normal_noise(self, noise_range=1.):
         return noise_range * random.gauss(0., 1.)
 
-    # 每个period最后会报告action_machine中各种用户的量
-    # todo: 画动态bar图，https://www.youtube.com/watch?v=qThD1InmsuI&ab_channel=1littlecoder
-    def _report_robot_user_status(self):
-        report_message_list = []
-        report_message_list.append('period: %s' % self._period)
-        report_message_list.append('offline: %s' % len(self.offline_uid_set))
-        report_message_list.append('recommend: %s' % len(self.recommend_uid_set))
-        report_message_list.append('choosing: %s' % len(self.choosing_uid_set))
-        report_message_list.append('click_drive: %s' % len(self.click_drive_uid_set))
-        report_message_list.append('read_drive: %s' % len(self.read_drive_uid_set))
-        report_message_list.append('reading: %s' % len(self.reading_uid_set))
-        # report_message_list.append('has_online: %s' % len(self.has_online_set))
-        report_message = ','.join(report_message_list)
-        logging.error(report_message)
-        # self.metrics_writer.record_action_machine()
+    # 维护recent_drive_score的队列并推入新值
+    def _push_drive_score(self, recent_drive_score_list, drive_score):
+        recent_drive_count = 5
+        if len(recent_drive_score_list) >= recent_drive_count:
+            recent_drive_score_list.pop(0)
+        recent_drive_score_list.append(drive_score)
 
     # 在关闭app时做的收尾工作
     def _just_shut_down_app(self, robot_user):
@@ -284,26 +271,30 @@ class ActionMachine(object):
         robot_user._detest_rate *= detest_rate_decay
     
     # 打开app的冲动值
-    def _update_use_app_impulse_value(self, robot_user):
+    def _update_offline_use_app_impulse_value(self, robot_user):
         for bid, reading_info in robot_user._history_read_map.items():
             bid_addict_value = reading_info.addict_value
             # 尚未想好bid_addict_value怎么影响_use_app_impulse_value
         delta = (robot_user._addict_rate - robot_user._detest_rate) * 1.
-        robot_user._use_app_impulse_value += delta * .01
+        robot_user._use_app_impulse_value += delta * Args.use_app_impluse_value_update_rate
+
+    def _update_use_app_impulse_value(self, robot_user):
+        pass
 
     # 第一状态——offline
     def _run_robot_offline(self, robot_user):
         if robot_user._use_app_impulse_value > 0:
+            self.metrics_client.emit_counter('offline2recommend', 1)
             robot_user._status = RobotStatus.RECOMMEND
         else:
             robot_user._status = RobotStatus.OFFLINE
-        self._update_use_app_impulse_value(robot_user)
+        self._update_offline_use_app_impulse_value(robot_user)
         self._update_addict_rate(robot_user)
         self._update_detest_rate(robot_user)
     
     # 第二状态——recommend
     def _run_robot_recommend(self, robot_user):
-        self.recommend_sys.recommend(robot_user)
+        self.rec_sys.recommend(robot_user)
         robot_user._chosen_bid_set.clear()
         robot_user._choosing_delay = 2
         robot_user._reading_bid = None
@@ -321,18 +312,22 @@ class ActionMachine(object):
     
     # 第四状态——click_drive
     def _run_robot_click_drive(self, robot_user):
+        self.reset_timer()
         for bid in robot_user._choosing_bid_list:
             if bid in robot_user._chosen_bid_set:
                 continue
             book = self.book_map[bid]
             click_drive_score = self._get_click_drive_score(
                 robot_user, book, sample_loop=1)
+            title_detest_drive_score = self._get_title_detest_drive_score(
+                robot_user, book, sample_loop=1)
             if bid in robot_user._history_impr_map:
                 suppress_rate = .5
             else:
                 suppress_rate = 1.
-            # sys.stdout.write("\r %s" % click_drive_score)
             click_drive_score *= suppress_rate
+            if title_detest_drive_score > Args.title_detest_drive_threshold:
+                continue
             if click_drive_score > Args.click_drive_threshold:
                 robot_user._reading_bid = bid
                 robot_user._chosen_bid_set.add(bid)
@@ -350,6 +345,8 @@ class ActionMachine(object):
             # todo: not only OFFLINE, but also RECOMMEND
             robot_user._status = RobotStatus.OFFLINE
             self._just_shut_down_app(robot_user)
+        self._update_use_app_impulse_value(robot_user)
+        self.emit_timer('click_drive_delay')
 
     # 第五状态——read_drive
     def _run_robot_read_drive(self, robot_user):
@@ -368,11 +365,14 @@ class ActionMachine(object):
             chapter=reading_info.chapter,
             sample_loop=1
         )
-        if read_drive_score > Args.read_drive_threshold:
+        detest_drive_score = self._get_detest_drive_score(
+                robot_user, book, reading_info.chapter, sample_loop=1)
+        if read_drive_score > Args.read_drive_threshold and detest_drive_score < Args.detest_drive_threshold:
             robot_user._status = RobotStatus.READING
             robot_user._chapter_finish_delay = 3
         else:
             robot_user._status = RobotStatus.CHOOSING
+        self._update_use_app_impulse_value(robot_user)
 
     # 第六状态——reading
     def _run_robot_reading(self, robot_user):
@@ -405,11 +405,44 @@ class ActionMachine(object):
             self._run_robot_reading(robot_user)
         self._update_robot_status()
         self._report_robot_user_status()
+        self._metrics_emit_user_status()
+        self._metrics_post_to_server()
 
     def run(self, k=Args.period_threshold):
+        self.metrics_client.clear_all()
         self._period = 0
-        while self._period+1 <= k:
-            self.run_one_period()
+        try:
+            while self._period+1 <= k:
+                self.run_one_period()
+        except KeyboardInterrupt:
+            pass
+
+    # 每个period最后会报告action_machine中各种用户的量
+    def _report_robot_user_status(self):
+        report_message_list = []
+        report_message_list.append('period: %s' % self._period)
+        report_message_list.append('offline: %s' % len(self.offline_uid_set))
+        report_message_list.append('recommend: %s' % len(self.recommend_uid_set))
+        report_message_list.append('choosing: %s' % len(self.choosing_uid_set))
+        report_message_list.append('click_drive: %s' % len(self.click_drive_uid_set))
+        report_message_list.append('read_drive: %s' % len(self.read_drive_uid_set))
+        report_message_list.append('reading: %s' % len(self.reading_uid_set))
+        # report_message_list.append('has_online: %s' % len(self.has_online_set))
+        report_message = ','.join(report_message_list)
+        sys.stdout.write('\r'+report_message+' '*10)
+        # logging.error(report_message)
+    
+    def _metrics_emit_user_status(self):
+        metrics_client = self.metrics_client
+        metrics_client.emit_store('offline_uid', len(self.offline_uid_set))
+        metrics_client.emit_store('recommend_uid', len(self.recommend_uid_set))
+        metrics_client.emit_store('choosing_uid', len(self.choosing_uid_set))
+        metrics_client.emit_store('click_drive_uid', len(self.click_drive_uid_set))
+        metrics_client.emit_store('read_drive_uid', len(self.read_drive_uid_set))
+        metrics_client.emit_store('reading_uid', len(self.reading_uid_set))
+    
+    def _metrics_post_to_server(self):
+        self.metrics_client.post_to_metrics_server(self._period)
 
     # 在每一peroid结束时进行
     def _update_robot_status(self):
